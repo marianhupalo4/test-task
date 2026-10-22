@@ -33,11 +33,37 @@ Both leak checks were mutation-tested: writing the secret into `label` fails the
 
 Manual run in Docker Compose: migrate → seed → store → use → revoke → `410` → history, all through `curl`.
 
+## What Changed
+
+Differences from [srs.md](srs.md) and [design.md](design.md) found while implementing, and fixes made after review.
+
+| Change                                                                                               | Why                                                                                                                                                                                                                                                                                                                                                 |
+| ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Postgres healthcheck uses `pg_isready -h 127.0.0.1` instead of the default socket check              | **Bug found by the manual curl check.** On a fresh volume the Postgres image first runs a temporary server that accepts only socket connections; the socket healthcheck reported healthy, `migrate` connected over TCP during the restart and failed. Unit and integration tests did not catch it because Testcontainers waits for the real server. |
+| Migrations live in top-level `migrations/`, not `src/db/migrations/`                                 | `tsc` does not copy `.sql` files to `dist/`; the Docker image copies the directory as is. Design updated.                                                                                                                                                                                                                                           |
+| "Vault" renamed to "credential service" in code, Compose, docs                                       | Avoids confusion with HashiCorp Vault, which [ADR-0001](adr/0001-own-service-instead-of-vault.md) rejects.                                                                                                                                                                                                                                          |
+| OQ-7 resolved as D-27                                                                                | Audit failure on an already rejected request keeps the original status and is logged.                                                                                                                                                                                                                                                               |
+| History ordered by `id DESC` instead of `(ts, id)`                                                   | `id` follows insert order and gives a simple keyset cursor.                                                                                                                                                                                                                                                                                         |
+| Dev tokens via `envkeep seed` instead of `token issue / revoke / list`                               | Enough for the main scenario; the token CLI is a next step.                                                                                                                                                                                                                                                                                         |
+| Audit failure in tests is simulated with a `BEFORE INSERT` trigger, not `REVOKE INSERT` (design §10) | The tests run as a superuser, which ignores grants.                                                                                                                                                                                                                                                                                                 |
+| Fastify 4xx errors (for example an empty JSON body) are returned as `400`-class errors, not `500`    | Found while testing `revoke` without a body.                                                                                                                                                                                                                                                                                                        |
+
 ## Known Risks
 
 1. **The service connects to PostgreSQL as a superuser.** The same `envkeep` user owns the schema, runs migrations and serves requests, so the audit is not append-only and the service can change the schema or delete audit rows (FR-28, NFR-7 not met). A bug or SQL injection would have full DB access. Fix: next step 1.
 2. **Master key in an environment variable** is readable by anyone with access to the host or `docker inspect` (ADR-0004); one key per environment is not enforced yet.
 3. **Implemented but untested paths**: rollback of `store` / `revoke` on audit failure and decryption failure (`500`) work in code but have no tests yet (next steps 2 and 3).
+
+## Technical Debt
+
+- **One DB user for everything** (see Known Risks 1): no `credential_owner` / `credential_app` roles, no append-only trigger.
+- **Tests are not typechecked**: `tsconfig.json` includes only `src`; test files are checked only by Vitest at runtime.
+- **All routes, the auth hook and the error handler in one file** `src/server/app.ts`; route handlers use non-null assertions (`req.actor!`, `req.audit!`) that rely on the auth hook running first.
+- **Secret size is checked after JSON parsing**: Fastify accepts bodies up to its default 1 MiB before the 16 KiB check in `store`.
+- **Constants duplicated between code and SQL**: providers, actions and outcomes are listed both in TypeScript and in `CHECK` constraints.
+- **Key versions are hardcoded** (`key_version = 1`, `master_key_version = 1`); there is no rotation path yet.
+- **Seed prints tokens to stdout** and creates new tokens on every run; acceptable for development only.
+- **Some intermediate commits do not pass tests** (`a6c27f1`: code changed, tests updated in the next commit). From now on tests are committed together with the code.
 
 ## What I Would Do Next
 
