@@ -1,4 +1,4 @@
-# Design: Credential Vault Service
+# Design: Credential Service
 
 Implementation design for [srs.md](srs.md). `FR-n`, `NFR-n`, `D-n` refer to the SRS. Architecture decisions are recorded in [adr/](adr/).
 
@@ -22,7 +22,7 @@ src/
   crypto/     pure functions, no I/O: keys, AES-256-GCM, AAD, token generation and hashing
   db/         pg pool, transactions, SQL queries per table, migration runner
   db/migrations/  0001_init.sql, 0002_….sql
-  vault/      operations store / use / revoke / history: orchestrate db + crypto + audit
+  credential-service/  operations store / use / revoke / history: orchestrate db + crypto + audit
   server/     Fastify app, routes, auth hook, error handler, config
   cli/        migrate, token issue / revoke / list
   shared/     types shared between server and CLI
@@ -31,10 +31,10 @@ src/
 ```mermaid
 flowchart LR
     routes[server/routes] --> auth[server/auth]
-    routes --> vault[vault]
+    routes --> service[credential-service]
     auth --> db[db]
-    vault --> crypto[crypto]
-    vault --> db
+    service --> crypto[crypto]
+    service --> db
     cli[cli] --> db
     cli --> crypto
 ```
@@ -43,7 +43,7 @@ Rules:
 
 - `crypto` imports nothing from the project and does no I/O, so it is unit-tested in isolation.
 - Only `db` contains SQL.
-- `server` never calls `crypto` directly; all secret handling goes through `vault`.
+- `server` never calls `crypto` directly; all secret handling goes through `credential-service`.
 
 ## 3. Request Handling
 
@@ -52,7 +52,7 @@ Rules:
 1. **Schema validation** (Fastify JSON schema) → `400`.
 2. **Auth hook** (`onRequest`): hash the bearer token, load the token with its permissions and purposes in one query → `401` if missing, unknown or revoked (FR-21, FR-25).
 3. **Route handler** checks the permission for the action and, after loading the credential, its provider → `403` (FR-23). For `use`, it checks the purpose → `400` / `403` (FR-8).
-4. **Vault operation** runs and writes the audit event (§3.2).
+4. **Credential service operation** runs and writes the audit event (§3.2).
 5. **Error handler** maps errors to `{error: {code, message}}` and writes the audit event for rejected requests (FR-26).
 
 Each request carries an `auditContext` (action, token id, client id, credential id, provider, purpose) filled in step by step, so a rejection at any step produces one event with everything known so far.
@@ -71,7 +71,7 @@ Each request carries an `auditContext` (action, token id, client id, credential 
 ```mermaid
 sequenceDiagram
     participant R as Route
-    participant V as vault.use
+    participant V as credentialService.use
     participant C as crypto
     participant D as db
     R->>V: use(credentialId, purpose, auditContext)
@@ -172,17 +172,17 @@ Tables as in [SRS §6](srs.md#6-data-model). Additional implementation details:
 
 ### Roles (D-19)
 
-| Role          | Used by         | Privileges                                                                                                                         |
-| ------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `vault_owner` | Migrations only | Owns schema and tables                                                                                                             |
-| `vault_app`   | Running service | `SELECT`, `INSERT`, `UPDATE` on credential and token tables; `SELECT`, `INSERT` on `audit_events`; `USAGE` on its sequence; no DDL |
+| Role               | Used by         | Privileges                                                                                                                         |
+| ------------------ | --------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `credential_owner` | Migrations only | Owns schema and tables                                                                                                             |
+| `credential_app`   | Running service | `SELECT`, `INSERT`, `UPDATE` on credential and token tables; `SELECT`, `INSERT` on `audit_events`; `USAGE` on its sequence; no DDL |
 
-The service never receives `vault_owner` credentials.
+The service never receives `credential_owner` credentials.
 
 ### Append-only enforcement (D-19)
 
-- `vault_app` has no `UPDATE`, `DELETE` or `TRUNCATE` on `audit_events`.
-- A `BEFORE UPDATE OR DELETE` row trigger and a `BEFORE TRUNCATE` statement trigger on `audit_events` raise an exception for any role, including `vault_owner`.
+- `credential_app` has no `UPDATE`, `DELETE` or `TRUNCATE` on `audit_events`.
+- A `BEFORE UPDATE OR DELETE` row trigger and a `BEFORE TRUNCATE` statement trigger on `audit_events` raise an exception for any role, including `credential_owner`.
 - A DB superuser can still bypass this (see SRS §9).
 
 ### Migrations
@@ -190,7 +190,7 @@ The service never receives `vault_owner` credentials.
 - Files `src/db/migrations/NNNN_name.sql`, applied in order, each in its own transaction.
 - Applied versions are stored in `schema_migrations (version, applied_at)`.
 - `pg_advisory_lock` prevents two runners from applying migrations at the same time.
-- Run by `envkeep migrate` as `vault_owner`; migrations are forward-only.
+- Run by `envkeep migrate` as `credential_owner`; migrations are forward-only.
 
 ## 7. Logging
 
@@ -205,33 +205,33 @@ The service never receives `vault_owner` credentials.
 | Variable             | Required | Description                             |
 | -------------------- | -------- | --------------------------------------- |
 | `ENVKEEP_MASTER_KEY` | yes      | base64, 32 bytes after decoding (FR-30) |
-| `DATABASE_URL`       | yes      | Connection as `vault_app`               |
+| `DATABASE_URL`       | yes      | Connection as `credential_app`          |
 | `HOST`, `PORT`       | no       | Default `0.0.0.0`, `8080`               |
 | `LOG_LEVEL`          | no       | Default `info`                          |
 
-The CLI uses its own `DATABASE_URL` pointing to `vault_owner` for `migrate` and to `vault_app` for token commands. Config is validated at startup; any invalid value stops the process.
+The CLI uses its own `DATABASE_URL` pointing to `credential_owner` for `migrate` and to `credential_app` for token commands. Config is validated at startup; any invalid value stops the process.
 
 ## 9. Deployment
 
 ```mermaid
 flowchart LR
-    subgraph net[vault-internal network]
-        vault[vault]
+    subgraph net[credential-internal network]
+        service[credential-service]
         migrate[migrate<br/>one-shot]
-        pg[(vault-postgres)]
+        pg[(credential-postgres)]
         backend[main backend]
         workers[workers]
     end
-    vault --> pg
+    service --> pg
     migrate --> pg
-    backend --> vault
-    workers --> vault
+    backend --> service
+    workers --> service
 ```
 
-- `docker-compose.yml`: services `vault-postgres`, `migrate`, `vault`; no `ports` on any service (NFR-3).
-- `migrate` runs `envkeep migrate` with `vault_owner` and exits; `vault` starts after it completes successfully (`depends_on: condition: service_completed_successfully`). This keeps owner credentials out of the running service.
+- `docker-compose.yml`: services `credential-postgres`, `migrate`, `credential-service`; no `ports` on any service (NFR-3).
+- `migrate` runs `envkeep migrate` with `credential_owner` and exits; `credential-service` starts after it completes successfully (`depends_on: condition: service_completed_successfully`). This keeps owner credentials out of the running service.
 - Roles and passwords are created by an init script in `docker-entrypoint-initdb.d`.
-- `vault-internal` is a named network that the main backend and workers join.
+- `credential-internal` is a named network that the main backend and workers join.
 - `ENVKEEP_MASTER_KEY` is passed from the host environment, never committed.
 - `docker-compose.override.yml` for local development only: publishes `5432` and `8080` to `127.0.0.1`.
 
@@ -245,29 +245,29 @@ flowchart LR
 | Deployment  | AC-19: no `ports` in `docker-compose.yml`                                     | Vitest, YAML parse                       |
 
 - **Real PostgreSQL**: a Vitest global setup starts `postgres:17-alpine` via Testcontainers, creates the roles and applies migrations into a template database. Each test file creates its own database from the template, so tests are isolated without deleting audit rows (which the trigger forbids).
-- **Audit failure** (AC-7, AC-16): `REVOKE INSERT ON audit_events FROM vault_app` in the test database, so the failure is a real DB error, not a mock.
-- **Grants and trigger** (AC-15): queries are run as `vault_app` and as `vault_owner`.
+- **Audit failure** (AC-7, AC-16): `REVOKE INSERT ON audit_events FROM credential_app` in the test database, so the failure is a real DB error, not a mock.
+- **Grants and trigger** (AC-15): queries are run as `credential_app` and as `credential_owner`.
 - **Logs** (AC-20): the app logger writes to an in-memory stream; after the suite, the captured output is searched for every secret value, token and key used in the tests, plus the `evk_` pattern.
 
 ## 11. Alternatives
 
-| Decision                   | Alternative                               | Why not                                                                                                                                                  |
-| -------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Own service                | Vault / OpenBao, cloud secret managers    | [ADR-0001](adr/0001-own-service-instead-of-vault.md)                                                                                                     |
-| Key per client             | One key for all, key per credential       | [ADR-0002](adr/0002-per-client-encryption-key.md)                                                                                                        |
-| Raw SQL                    | Prisma, Drizzle, Knex                     | [ADR-0003](adr/0003-raw-sql-without-orm.md)                                                                                                              |
-| Master key in env          | AWS KMS now, Docker secrets file          | [ADR-0004](adr/0004-master-key-in-env.md)                                                                                                                |
-| Fastify                    | Express, NestJS                           | Express has no built-in schema validation or structured logger; NestJS adds a framework layer the service does not need. Fastify is already in the repo. |
-| `pg`                       | `postgres` (porsager)                     | `pg` is the most widely used driver; explicit client checkout makes transaction boundaries visible.                                                      |
-| Own migration runner       | dbmate, node-pg-migrate                   | The runner is small; plain SQL files and no extra binary or DSL.                                                                                         |
-| Fastify JSON schema        | zod                                       | Built in, no extra dependency, validation happens before the handler.                                                                                    |
-| No client key cache        | In-memory LRU cache                       | Gain is microseconds; cache keeps plaintext keys in memory longer.                                                                                       |
-| Grants + trigger           | Grants only                               | Grants do not stop the table owner; the trigger does.                                                                                                    |
-| Grants + trigger           | External append-only log (S3 Object Lock) | Another system; loses the transaction with `store` / `revoke` (FR-29).                                                                                   |
-| Audit in the vault DB      | Separate audit database                   | Same transaction as the data change is required by FR-29.                                                                                                |
-| Testcontainers             | Test DB in docker compose, pg-mem         | Compose DB must be started manually and is shared between runs; pg-mem does not support grants and triggers.                                             |
-| One-shot `migrate` service | Migrate on service startup                | The running service would need `vault_owner` credentials.                                                                                                |
-| Docker Compose             | Kubernetes                                | One instance (NFR-2); Kubernetes adds operations cost without benefit here.                                                                              |
+| Decision                           | Alternative                               | Why not                                                                                                                                                  |
+| ---------------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Own service                        | Vault / OpenBao, cloud secret managers    | [ADR-0001](adr/0001-own-service-instead-of-vault.md)                                                                                                     |
+| Key per client                     | One key for all, key per credential       | [ADR-0002](adr/0002-per-client-encryption-key.md)                                                                                                        |
+| Raw SQL                            | Prisma, Drizzle, Knex                     | [ADR-0003](adr/0003-raw-sql-without-orm.md)                                                                                                              |
+| Master key in env                  | AWS KMS now, Docker secrets file          | [ADR-0004](adr/0004-master-key-in-env.md)                                                                                                                |
+| Fastify                            | Express, NestJS                           | Express has no built-in schema validation or structured logger; NestJS adds a framework layer the service does not need. Fastify is already in the repo. |
+| `pg`                               | `postgres` (porsager)                     | `pg` is the most widely used driver; explicit client checkout makes transaction boundaries visible.                                                      |
+| Own migration runner               | dbmate, node-pg-migrate                   | The runner is small; plain SQL files and no extra binary or DSL.                                                                                         |
+| Fastify JSON schema                | zod                                       | Built in, no extra dependency, validation happens before the handler.                                                                                    |
+| No client key cache                | In-memory LRU cache                       | Gain is microseconds; cache keeps plaintext keys in memory longer.                                                                                       |
+| Grants + trigger                   | Grants only                               | Grants do not stop the table owner; the trigger does.                                                                                                    |
+| Grants + trigger                   | External append-only log (S3 Object Lock) | Another system; loses the transaction with `store` / `revoke` (FR-29).                                                                                   |
+| Audit in the credential service DB | Separate audit database                   | Same transaction as the data change is required by FR-29.                                                                                                |
+| Testcontainers                     | Test DB in docker compose, pg-mem         | Compose DB must be started manually and is shared between runs; pg-mem does not support grants and triggers.                                             |
+| One-shot `migrate` service         | Migrate on service startup                | The running service would need `credential_owner` credentials.                                                                                           |
+| Docker Compose                     | Kubernetes                                | One instance (NFR-2); Kubernetes adds operations cost without benefit here.                                                                              |
 
 ## 12. Open Points
 

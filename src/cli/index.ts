@@ -15,7 +15,7 @@ function databaseUrl(): string {
 
 const program = new Command();
 
-program.name('envkeep').description('Internal credential vault').version('0.1.0');
+program.name('envkeep').description('Internal credential service').version('0.1.0');
 
 program
   .command('migrate')

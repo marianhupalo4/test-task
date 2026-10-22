@@ -24,7 +24,7 @@ import {
   markRevoked,
 } from '../db/credentials.js';
 import { type Db, withTransaction } from '../db/pool.js';
-import { VaultError, errors } from './errors.js';
+import { CredentialServiceError, errors } from './errors.js';
 import type { Actor } from './tokens.js';
 
 export const PROVIDERS = ['shopify', 'meta_ads', 'google_ads'] as const;
@@ -43,7 +43,7 @@ export interface AuditContext {
   purpose: string | null;
 }
 
-export class Vault {
+export class CredentialService {
   constructor(
     private readonly pool: pg.Pool,
     private readonly masterKey: Buffer,
@@ -158,7 +158,7 @@ export class Vault {
     return { events, nextCursor };
   }
 
-  async recordRejection(audit: AuditContext, error: VaultError): Promise<void> {
+  async recordRejection(audit: AuditContext, error: CredentialServiceError): Promise<void> {
     await insertAuditEvent(this.pool, {
       ...audit,
       outcome: error.status >= 500 ? 'error' : 'denied',

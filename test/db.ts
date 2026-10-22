@@ -1,4 +1,4 @@
-export const TEMPLATE_DB = 'vault_template';
+export const TEMPLATE_DB = 'credential_template';
 
 export function databaseUrl(baseUrl: string, database: string): string {
   const url = new URL(baseUrl);

@@ -1,37 +1,37 @@
 services:
-  vault-postgres:
+  credential-postgres:
     image: postgres:17-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: envkeep
-      POSTGRES_PASSWORD: ${VAULT_DB_PASSWORD:?VAULT_DB_PASSWORD is required}
+      POSTGRES_PASSWORD: ${CREDENTIAL_DB_PASSWORD:?CREDENTIAL_DB_PASSWORD is required}
       POSTGRES_DB: envkeep
     volumes:
-      - vault-pgdata:/var/lib/postgresql/data
+      - credential-pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U envkeep -d envkeep']
       interval: 5s
       timeout: 3s
       retries: 10
     networks:
-      - vault-internal
+      - credential-internal
 
   migrate:
     build: .
     command: ['node', 'dist/cli/index.js', 'migrate']
     environment:
-      DATABASE_URL: postgres://envkeep:${VAULT_DB_PASSWORD}@vault-postgres:5432/envkeep
+      DATABASE_URL: postgres://envkeep:${CREDENTIAL_DB_PASSWORD}@credential-postgres:5432/envkeep
     depends_on:
-      vault-postgres:
+      credential-postgres:
         condition: service_healthy
     networks:
-      - vault-internal
+      - credential-internal
 
-  vault:
+  credential-service:
     build: .
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgres://envkeep:${VAULT_DB_PASSWORD}@vault-postgres:5432/envkeep
+      DATABASE_URL: postgres://envkeep:${CREDENTIAL_DB_PASSWORD}@credential-postgres:5432/envkeep
       ENVKEEP_MASTER_KEY: ${ENVKEEP_MASTER_KEY:?ENVKEEP_MASTER_KEY is required}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
@@ -47,11 +47,11 @@ services:
       timeout: 3s
       retries: 3
     networks:
-      - vault-internal
+      - credential-internal
 
 networks:
-  vault-internal:
-    name: vault-internal
+  credential-internal:
+    name: credential-internal
 
 volumes:
-  vault-pgdata:
+  credential-pgdata:

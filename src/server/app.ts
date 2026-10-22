@@ -2,9 +2,14 @@ import Fastify, { type FastifyError } from 'fastify';
 import type pg from 'pg';
 import type { HealthResponse } from '../shared/types.js';
 import type { AuditAction } from '../db/audit.js';
-import { VaultError, errors } from '../vault/errors.js';
-import { type Actor, authenticate } from '../vault/tokens.js';
-import { type AuditContext, PROVIDERS, type Provider, Vault } from '../vault/vault.js';
+import { CredentialServiceError, errors } from '../credential-service/errors.js';
+import { type Actor, authenticate } from '../credential-service/tokens.js';
+import {
+  type AuditContext,
+  PROVIDERS,
+  type Provider,
+  CredentialService,
+} from '../credential-service/credential-service.js';
 
 declare module 'fastify' {
   interface FastifyContextConfig {
@@ -40,7 +45,7 @@ export function buildApp(options: AppOptions) {
       ...(options.logStream ? { stream: options.logStream } : {}),
     },
   });
-  const vault = new Vault(options.pool, options.masterKey);
+  const credentialService = new CredentialService(options.pool, options.masterKey);
 
   app.decorateRequest('audit', null);
   app.decorateRequest('actor', null);
@@ -66,17 +71,17 @@ export function buildApp(options: AppOptions) {
 
   app.setErrorHandler(async (err: FastifyError, req, reply) => {
     const error =
-      err instanceof VaultError
+      err instanceof CredentialServiceError
         ? err
         : err.validation
           ? errors.validation(err.message)
           : err.statusCode && err.statusCode < 500
-            ? new VaultError(err.statusCode, 'bad_request', err.message)
-            : new VaultError(500, 'internal_error', 'Internal error');
+            ? new CredentialServiceError(err.statusCode, 'bad_request', err.message)
+            : new CredentialServiceError(500, 'internal_error', 'Internal error');
     if (error.code === 'internal_error') req.log.error({ err }, 'request failed');
     if (req.audit && error.code !== 'audit_unavailable') {
       try {
-        await vault.recordRejection(req.audit, error);
+        await credentialService.recordRejection(req.audit, error);
       } catch (auditErr) {
         req.log.error({ err: auditErr }, 'audit write failed for rejected request');
       }
@@ -110,7 +115,7 @@ export function buildApp(options: AppOptions) {
       },
     },
     async (req, reply) => {
-      const result = await vault.store(req.actor!, req.audit!, {
+      const result = await credentialService.store(req.actor!, req.audit!, {
         clientId: req.body.client_id,
         provider: req.body.provider,
         secret: req.body.secret,
@@ -135,7 +140,12 @@ export function buildApp(options: AppOptions) {
       },
     },
     async (req) => {
-      const result = await vault.use(req.actor!, req.audit!, req.params.id, req.body.purpose);
+      const result = await credentialService.use(
+        req.actor!,
+        req.audit!,
+        req.params.id,
+        req.body.purpose,
+      );
       return { secret: result.secret, provider: result.provider, client_id: result.clientId };
     },
   );
@@ -144,7 +154,7 @@ export function buildApp(options: AppOptions) {
     '/v1/credentials/:id/revoke',
     { config: { action: 'revoke' }, schema: { params: uuidParams } },
     async (req) => {
-      const result = await vault.revoke(req.actor!, req.audit!, req.params.id);
+      const result = await credentialService.revoke(req.actor!, req.audit!, req.params.id);
       return {
         credential_id: result.credentialId,
         status: result.status,
@@ -174,7 +184,7 @@ export function buildApp(options: AppOptions) {
       },
     },
     async (req) => {
-      const result = await vault.history(req.actor!, req.audit!, {
+      const result = await credentialService.history(req.actor!, req.audit!, {
         clientId: req.query.client_id,
         credentialId: req.query.credential_id ?? null,
         cursor: req.query.cursor ?? null,

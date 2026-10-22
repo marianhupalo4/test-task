@@ -1,6 +1,6 @@
 import type pg from 'pg';
-import { type TokenSpec, issueToken } from '../vault/tokens.js';
-import { PROVIDERS } from '../vault/vault.js';
+import { type TokenSpec, issueToken } from '../credential-service/tokens.js';
+import { PROVIDERS } from '../credential-service/credential-service.js';
 
 export const SEED_TOKENS: TokenSpec[] = [
   {

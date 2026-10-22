@@ -1,6 +1,6 @@
 # envkeep
 
-Internal credential vault for client tokens. See [docs/](docs/).
+Internal credential service for client tokens. See [docs/](docs/).
 
 ## Development
 
@@ -17,7 +17,7 @@ Put the generated key into `ENVKEEP_MASTER_KEY` in `.env`.
 Migrations run automatically in the `migrate` service. Create development tokens:
 
 ```sh
-docker compose exec vault node dist/cli/index.js seed
+docker compose exec credential-service node dist/cli/index.js seed
 ```
 
 `docker-compose.override.yml` publishes Postgres and the service on `127.0.0.1` for local development. Production uses only the base file:

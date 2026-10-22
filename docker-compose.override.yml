@@ -1,8 +1,8 @@
 services:
-  vault-postgres:
+  credential-postgres:
     ports:
-      - '127.0.0.1:${VAULT_DB_PORT:-5432}:5432'
+      - '127.0.0.1:${CREDENTIAL_DB_PORT:-5432}:5432'
 
-  vault:
+  credential-service:
     ports:
       - '127.0.0.1:${PORT:-8080}:8080'

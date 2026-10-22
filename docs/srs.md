@@ -1,4 +1,4 @@
-# Software Requirements Specification: Credential Vault Service
+# Software Requirements Specification: Credential Service
 
 Based on [problem.md](problem.md). Decisions beyond the owner's original list are recorded in [§13 Decision Log](#13-decision-log) and referenced as `D-n`. Implementation details live in [design.md](design.md).
 
@@ -6,19 +6,19 @@ Based on [problem.md](problem.md). Decisions beyond the owner's original list ar
 
 | ID  | Goal                                                                                                                       |
 | --- | -------------------------------------------------------------------------------------------------------------------------- |
-| G-1 | A dump of the main database or of the vault database alone does not reveal any client credential.                          |
+| G-1 | A dump of the main database or of the credential service database alone does not reveal any client credential.             |
 | G-2 | Compromise of a single client's encryption key reveals only that client's credentials.                                     |
 | G-3 | Every access to a credential is recorded and can be shown to the owning client.                                            |
 | G-4 | Internal services get credentials only for the actions and providers they are allowed to, and only for a declared purpose. |
 
 ## 2. Actors
 
-| Actor          | Description                                                                                                             |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Main backend   | Stores credentials on client onboarding, revokes them, reads audit history to show it to clients.                       |
-| Worker service | Internal data collector or report/alert sender. Uses credentials to call provider APIs.                                 |
-| Operator       | Engineer who deploys the vault, sets the master key, issues service tokens with their permissions and allowed purposes. |
-| Client         | Our customer (tenant). Never calls the vault directly; sees history through the main backend.                           |
+| Actor          | Description                                                                                                                          |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Main backend   | Stores credentials on client onboarding, revokes them, reads audit history to show it to clients.                                    |
+| Worker service | Internal data collector or report/alert sender. Uses credentials to call provider APIs.                                              |
+| Operator       | Engineer who deploys the credential service, sets the master key, issues service tokens with their permissions and allowed purposes. |
+| Client         | Our customer (tenant). Never calls the credential service directly; sees history through the main backend.                           |
 
 ## 3. Context
 
@@ -27,14 +27,14 @@ flowchart LR
     Client([Client]) --> Backend[Main backend]
     Backend --> MainDB[(Main Postgres<br/>credential_id only)]
     subgraph internal[Internal Docker network]
-        Vault[Vault service]
-        VaultDB[(Vault Postgres)]
-        Vault --> VaultDB
+        CS[Credential service]
+        CSDB[(Credential service Postgres)]
+        CS --> CSDB
     end
-    Backend -- service token --> Vault
-    Worker[Worker services] -- service token --> Vault
+    Backend -- service token --> CS
+    Worker[Worker services] -- service token --> CS
     Worker --> Providers[Shopify / Meta Ads / Google Ads]
-    Env[[ENV: master key]] -.-> Vault
+    Env[[ENV: master key]] -.-> CS
 ```
 
 ## 4. Scenarios
@@ -50,8 +50,8 @@ Worker needs to call a provider API. It calls `use` with `credential_id` and one
 ```mermaid
 sequenceDiagram
     participant W as Worker
-    participant V as Vault
-    participant DB as Vault DB
+    participant V as Credential service
+    participant DB as Credential service DB
     W->>V: POST /v1/credentials/{id}/use {purpose}
     V->>V: authenticate token, check use:<provider>, check purpose in allowlist
     V->>DB: load credential + wrapped client key
@@ -95,7 +95,7 @@ stateDiagram-v2
 - **FR-2** `store` rejects an unknown provider, an empty secret or a secret larger than the size limit (16 KiB, A-5) with `400`.
 - **FR-3** On the first `store` for a `client_id`, the service generates a random 256-bit client key with `key_version = 1`, wraps it with the master key using AES-256-GCM and stores only the wrapped form. (D-3, D-6)
 - **FR-4** The secret is encrypted with the client's key using AES-256-GCM with a unique nonce per encryption. The additional authenticated data is `credential_id`, `client_id` and the client key's `key_version`. (D-4, D-5)
-- **FR-5** The vault database never contains a plaintext secret or an unwrapped client key.
+- **FR-5** The credential service database never contains a plaintext secret or an unwrapped client key.
 - **FR-6** Crypto uses only primitives from a standard, widely used library; no custom cryptographic algorithms. (D-7)
 
 ### Use
@@ -228,33 +228,33 @@ Errors: `{error: {code, message}}`.
 
 ## 8. Non-Functional Requirements
 
-| ID    | Requirement                                                                                                            |
-| ----- | ---------------------------------------------------------------------------------------------------------------------- |
-| NFR-1 | `use` latency p95 ≤ 50 ms at 50 rps on a single instance. Measured over a 10-minute run with error rate < 0.1% (D-23). |
-| NFR-2 | Deployment: one service instance + one Postgres via Docker Compose.                                                    |
-| NFR-3 | Neither the vault nor its Postgres publishes ports to the host; reachable only from the internal Docker network.       |
-| NFR-4 | Vault Postgres is a separate instance from the main database, with its own credentials.                                |
-| NFR-5 | Master key is read from an environment variable only; never written to the database, logs or responses.                |
-| NFR-6 | Application logs never contain secret values, client keys, master key or service token values. (D-24)                  |
-| NFR-7 | The vault application connects to Postgres with a least-privilege role that cannot change the schema. (D-19)           |
+| ID    | Requirement                                                                                                                   |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------- |
+| NFR-1 | `use` latency p95 ≤ 50 ms at 50 rps on a single instance. Measured over a 10-minute run with error rate < 0.1% (D-23).        |
+| NFR-2 | Deployment: one service instance + one Postgres via Docker Compose.                                                           |
+| NFR-3 | Neither the credential service nor its Postgres publishes ports to the host; reachable only from the internal Docker network. |
+| NFR-4 | Credential service Postgres is a separate instance from the main database, with its own credentials.                          |
+| NFR-5 | Master key is read from an environment variable only; never written to the database, logs or responses.                       |
+| NFR-6 | Application logs never contain secret values, client keys, master key or service token values. (D-24)                         |
+| NFR-7 | The credential service application connects to Postgres with a least-privilege role that cannot change the schema. (D-19)     |
 
 ## 9. Threat Model
 
-| Threat                                                 | Mitigation                                                                                    | Residual risk                            |
-| ------------------------------------------------------ | --------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| Main DB dump or restore to staging                     | Main DB holds only `credential_id`                                                            | None for secrets                         |
-| Vault DB dump or restore to staging                    | Secrets encrypted with client keys; client keys wrapped by a master key that is not in the DB | None without the master key              |
-| One client key leaked                                  | Per-client keys                                                                               | That client's credentials exposed        |
-| Master key leaked together with a vault DB dump        | Master key only in env; KMS planned                                                           | All credentials exposed                  |
-| Stolen service token                                   | Scoped permissions, purpose allowlist, revocable tokens, every use audited                    | Abuse within token scope until revoked   |
-| Compromised internal service                           | Same as stolen token                                                                          | Secrets it legitimately uses are exposed |
-| Audit tampering by the application                     | Append-only enforced in the database                                                          | DB superuser can still modify            |
-| Ciphertext swapped between credentials or key versions | AAD binds ciphertext to `credential_id`, `client_id`, `key_version`                           | None                                     |
-| Network sniffing                                       | Internal Docker network only                                                                  | Plain HTTP inside the network (OQ-4)     |
+| Threat                                                       | Mitigation                                                                                    | Residual risk                            |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| Main DB dump or restore to staging                           | Main DB holds only `credential_id`                                                            | None for secrets                         |
+| Credential service DB dump or restore to staging             | Secrets encrypted with client keys; client keys wrapped by a master key that is not in the DB | None without the master key              |
+| One client key leaked                                        | Per-client keys                                                                               | That client's credentials exposed        |
+| Master key leaked together with a credential service DB dump | Master key only in env; KMS planned                                                           | All credentials exposed                  |
+| Stolen service token                                         | Scoped permissions, purpose allowlist, revocable tokens, every use audited                    | Abuse within token scope until revoked   |
+| Compromised internal service                                 | Same as stolen token                                                                          | Secrets it legitimately uses are exposed |
+| Audit tampering by the application                           | Append-only enforced in the database                                                          | DB superuser can still modify            |
+| Ciphertext swapped between credentials or key versions       | AAD binds ciphertext to `credential_id`, `client_id`, `key_version`                           | None                                     |
+| Network sniffing                                             | Internal Docker network only                                                                  | Plain HTTP inside the network (OQ-4)     |
 
 ## 10. Assumptions
 
-- **A-1** `client_id` is an opaque identifier owned by the main backend; the vault does not validate it.
+- **A-1** `client_id` is an opaque identifier owned by the main backend; the credential service does not validate it.
 - **A-2** Service tokens, their permissions and allowed purposes are issued and revoked by the operator via CLI; there is no token management API.
 - **A-3** Callers do not cache or persist secrets returned by `use`.
 - **A-4** All callers run inside the same internal Docker network.
@@ -264,7 +264,7 @@ Errors: `{error: {code, message}}`.
 ## 11. Out of Scope
 
 - Updating a credential in place.
-- Direct client access to the vault.
+- Direct client access to the credential service.
 - KMS integration (master key stays in env for now).
 - High availability, multiple instances, replication.
 - Custom cryptography.
@@ -295,7 +295,7 @@ Errors: `{error: {code, message}}`.
 | AC-16 | Audit insert made to fail                                                                             | `store`; `revoke`                                                    | `503`; no new credential row; revoked credential stays `active`                                                         | FR-29               |
 | AC-17 | Master key env missing or 16 bytes                                                                    | Start service                                                        | Process exits with non-zero code                                                                                        | FR-30               |
 | AC-18 | Running stack                                                                                         | Load test `use` at 50 rps for 10 min                                 | p95 ≤ 50 ms, errors < 0.1%                                                                                              | NFR-1               |
-| AC-19 | `docker-compose.yml`                                                                                  | Inspect vault and vault Postgres services                            | No `ports` section; Postgres is separate from the main DB                                                               | NFR-2–NFR-4         |
+| AC-19 | `docker-compose.yml`                                                                                  | Inspect the credential service and its Postgres services             | No `ports` section; Postgres is separate from the main DB                                                               | NFR-2–NFR-4         |
 | AC-20 | Full test suite run with known secrets and tokens                                                     | Grep application logs                                                | No secret, key or token value found                                                                                     | NFR-5, NFR-6        |
 
 ## 13. Decision Log
@@ -305,7 +305,7 @@ Decisions made beyond the owner's original list. Status: **Accepted** — confir
 | ID   | Decision                                                                                                                                                                                             | Status   | Why                                                                                                        | Where             |
 | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------- | ----------------- |
 | D-1  | Provider identifiers are fixed strings `shopify`, `meta_ads`, `google_ads`; `label` is optional free text.                                                                                           | Accepted | Closed set of supported integrations; label helps humans tell credentials apart.                           | FR-1              |
-| D-2  | `credential_id` is a UUID generated by the vault.                                                                                                                                                    | Accepted | Not guessable, no coordination with the main DB needed.                                                    | FR-1              |
+| D-2  | `credential_id` is a UUID generated by the credential service.                                                                                                                                       | Accepted | Not guessable, no coordination with the main DB needed.                                                    | FR-1              |
 | D-3  | The client key is 256-bit random, created on the first `store` for a client, starting at `key_version = 1`.                                                                                          | Accepted | AES-256 key size; no separate onboarding call needed.                                                      | FR-3              |
 | D-4  | "Key version" in AAD is the client key's `key_version`; the master key version is stored separately.                                                                                                 | Accepted | The client key encrypts the secret, so its version is what must be bound to the ciphertext.                | FR-4              |
 | D-5  | AAD is an unambiguous encoding of `credential_id`, `client_id`, `key_version`; a unique nonce per encryption. Details: [design.md §4](design.md#4-cryptography).                                     | Accepted | Unambiguous encoding prevents field-boundary collisions; nonce reuse breaks GCM.                           | FR-4              |
@@ -329,7 +329,7 @@ Decisions made beyond the owner's original list. Status: **Accepted** — confir
 | D-23 | NFR-1 measured over a 10-minute run with error rate < 0.1%.                                                                                                                                          | Accepted | Makes the latency target reproducible.                                                                     | NFR-1             |
 | D-24 | Logs never contain secrets, keys or tokens.                                                                                                                                                          | Accepted | Logs are a common leak path.                                                                               | NFR-6             |
 | D-25 | Out of scope: provider token refresh/validation, migration of existing credentials, UI.                                                                                                              | Accepted | Keeps the first version to store / use / revoke / history.                                                 | §11               |
-| D-26 | Assumptions A-1–A-4.                                                                                                                                                                                 | Accepted | Boundaries the vault relies on but does not enforce.                                                       | §10               |
+| D-26 | Assumptions A-1–A-4.                                                                                                                                                                                 | Accepted | Boundaries the credential service relies on but does not enforce.                                          | §10               |
 
 ## 14. Open Questions
 
@@ -342,5 +342,5 @@ Decisions made beyond the owner's original list. Status: **Accepted** — confir
 | OQ-5 | Audit retention period and whether history must survive client offboarding.                                                                               |
 | OQ-6 | Client offboarding: should the client key be destroyed (crypto-shredding) when a client leaves?                                                           |
 | OQ-7 | If the audit write fails for a request that is already being rejected (`400`/`401`/`403`/`404`/`410`), should the response stay the same or become `503`? |
-| OQ-8 | Availability target and backup/restore procedure for the vault DB, including restore to non-production environments.                                      |
+| OQ-8 | Availability target and backup/restore procedure for the credential service DB, including restore to non-production environments.                         |
 | OQ-9 | How are existing credentials migrated from the main database: re-issued by clients or imported?                                                           |
