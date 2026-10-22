@@ -1,14 +1,46 @@
 services:
-  postgres:
+  vault-postgres:
     image: postgres:17-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: envkeep
-      POSTGRES_PASSWORD: envkeep
+      POSTGRES_PASSWORD: ${VAULT_DB_PASSWORD:?VAULT_DB_PASSWORD is required}
       POSTGRES_DB: envkeep
-    ports:
-      - '5432:5432'
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - vault-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U envkeep -d envkeep']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - vault-internal
+
+  vault:
+    build: .
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://envkeep:${VAULT_DB_PASSWORD}@vault-postgres:5432/envkeep
+      ENVKEEP_MASTER_KEY: ${ENVKEEP_MASTER_KEY:?ENVKEEP_MASTER_KEY is required}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      vault-postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8080/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - vault-internal
+
+networks:
+  vault-internal:
+    name: vault-internal
 
 volumes:
-  pgdata:
+  vault-pgdata:

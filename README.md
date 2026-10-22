@@ -1,3 +1,21 @@
 # envkeep
 
-Self-hosted secrets manager for small teams.
+Internal credential vault for client tokens. See [docs/](docs/).
+
+## Development
+
+```sh
+cp .env.example .env
+openssl rand -base64 32
+pnpm install
+pnpm test
+docker compose up --build
+```
+
+Put the generated key into `ENVKEEP_MASTER_KEY` in `.env`.
+
+`docker-compose.override.yml` publishes Postgres and the service on `127.0.0.1` for local development. Production uses only the base file:
+
+```sh
+docker compose -f docker-compose.yml up -d
+```

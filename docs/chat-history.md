@@ -344,3 +344,55 @@ node.js + typescript, fastify, postgres
 ## User
 
 ок, тут все гуд. закоміть і запуш
+
+---
+
+## Claude
+
+Закомітив і запушив у `origin/main`. Разом із цим комітом пішли й два попередні, які раніше лишалися тільки локально: `9b0a201 add srs and design docs` і `0899ee6 fix chat history export`.
+
+- **Коміт:** `dc66914 add design doc and adrs`. Автор — `marianhupalo4`, без рядка від Claude.
+- **Що увійшло:**
+  - `docs/design.md`;
+  - `docs/srs.md` з оновленими посиланнями на design;
+  - чотири ADR у `docs/adr/`;
+  - `docs/chat-history.md`.
+
+Після коміту робоча директорія була чиста. Але `docs/chat-history.md` перезаписується автоматично після кожного повідомлення, тож він знову зʼявиться як змінений.
+
+---
+
+## User
+
+окей, давай починаємо робити старт: typescript, fastify, docker compose, /health
+
+---
+
+## Claude
+
+Підготував основу проекту: TypeScript, Fastify, `/health` і docker compose. Перевірив: `pnpm typecheck` без помилок, `pnpm test` — 7 з 7 тестів проходять, `pnpm format:check` чистий. Стек піднявся в Docker, обидва контейнери були в стані healthy, `curl localhost:8080/health` повернув `{"status":"ok","version":"0.1.0"}`. Після перевірки я стек зупинив. Не комітив.
+
+**Що зроблено:**
+- **Конфігурація** (`src/server/config.ts`). Сервіс не стартує, якщо немає `DATABASE_URL`, неправильний `PORT` або `ENVKEEP_MASTER_KEY` не є 32 байтами в base64 (це FR-30). Перевірив вручну: з поганим ключем процес завершується з кодом 1 і пише «Invalid configuration: …».
+- **Застосунок** (`src/server/app.ts`). Додав маскування в логах за design §7: заголовок `authorization` і поля `*.secret`, `*.token`.
+- **Зупинка** (`src/server/index.ts`). На сигнали SIGINT/SIGTERM сервіс коректно закривається, а Docker надсилає SIGTERM при зупинці контейнера.
+- **Тести** (`test/health.test.ts`, `test/config.test.ts`) на Vitest, у `package.json` додав скрипт `test`.
+- **Docker:**
+  - `Dockerfile` збирає образ у два етапи; у фінальному образі тільки зібраний код і prod-залежності, запуск від користувача `node`.
+  - `docker-compose.yml`: сервіси `vault-postgres` і `vault` у мережі `vault-internal`, з перевірками стану (healthcheck). Портів назовні немає, тож NFR-3 виконано. Пароль бази й майстер-ключ беруться зі змінних середовища, без них compose не запуститься.
+  - `docker-compose.override.yml` для розробки відкриває порти тільки на `127.0.0.1`. Порт бази можна змінити через `VAULT_DB_PORT`.
+  - `.dockerignore`.
+- **`.env.example`:** змінну `MASTER_KEY` перейменував на `ENVKEEP_MASTER_KEY`, додав `VAULT_DB_PASSWORD` і `VAULT_DB_PORT`.
+- **`README.md`:** як запустити локально і як у продакшні (тільки базовий compose-файл).
+
+**Що варто знати:**
+- **Порт 5432 зайнятий** контейнером іншого вашого проекту, `appgroo-platform-postgres-1`. Його я не чіпав, тому порт бази й зробив налаштовуваним, а перевіряв на `55432`.
+- **Сховище бази перейменоване** з `pgdata` на `vault-pgdata`. Інакше Postgres підхопив би старі дані з паролем `envkeep`, і новий `VAULT_DB_PASSWORD` не спрацював би.
+- **Старий код не чіпав.** CLI-команда `run` і типи `Project`, `Environment`, `Secret`, `ServiceToken` у `src/shared/types.ts` лишилися від попередньої ідеї envkeep і не відповідають дизайну. Прибрати їх зараз чи коли дійдемо до токенів?
+- **Драйвер `pg` ще не підключений,** тож `/health` поки не перевіряє зʼєднання з базою. Додам разом із міграціями.
+
+---
+
+## User
+
+прибери старий код зараз і закоміть
