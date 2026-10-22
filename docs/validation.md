@@ -40,8 +40,7 @@ Manual run in Docker Compose: migrate → seed → store → use → revoke → 
 3. **Missing tests for implemented behaviour**: `store` / `revoke` rollback on audit failure (AC-16), size limit and validation on `store` (AC-2), one client key per client and concurrent first `store` (AC-3), startup with invalid master key as a process test (AC-17).
 4. **Token management CLI**: `token issue / revoke / list` instead of seed only; test for a revoked token (AC-11).
 5. **History**: `from` / `to` filters and cursor pagination tests (FR-19). Ordering is by `id DESC`, which follows insert order; switch to `(ts, id)` if that ever differs.
-6. **OQ-7**: if the audit write fails for an already rejected request, the original status is returned and the failure is logged. Needs a decision.
-7. **Typecheck tests**: `tsconfig.json` covers only `src`; add a config for `test/`.
-8. **Load test** for NFR-1 (AC-18) and a compose check for no published ports (AC-19).
-9. **Deployment**: DB init script with roles and separate passwords, master key per environment (ADR-0004), CI running lint, typecheck and tests.
-10. **Later, per SRS open questions**: AWS KMS for wrapping client keys, key rotation (OQ-3), crypto-shredding on offboarding (OQ-6), audit retention (OQ-5).
+6. **Typecheck tests**: `tsconfig.json` covers only `src`; add a config for `test/`.
+7. **Load test** for NFR-1 (AC-18) and a compose check for no published ports (AC-19).
+8. **Deployment**: DB init script with roles and separate passwords, master key per environment (ADR-0004), CI running lint, typecheck and tests.
+9. **Later, per SRS open questions**: AWS KMS for wrapping client keys, key rotation (OQ-3), crypto-shredding on offboarding (OQ-6), audit retention (OQ-5).
