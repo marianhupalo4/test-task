@@ -18,15 +18,17 @@ Implementation design for [srs.md](srs.md). `FR-n`, `NFR-n`, `D-n` refer to the 
 ## 2. Module Structure
 
 ```
+migrations/             0001_init.sql, 0002_….sql
 src/
-  crypto/     pure functions, no I/O: keys, AES-256-GCM, AAD, token generation and hashing
-  db/         pg pool, transactions, SQL queries per table, migration runner
-  db/migrations/  0001_init.sql, 0002_….sql
-  credential-service/  operations store / use / revoke / history: orchestrate db + crypto + audit
-  server/     Fastify app, routes, auth hook, error handler, config
-  cli/        migrate, token issue / revoke / list
-  shared/     types shared between server and CLI
+  crypto/               pure functions, no I/O: keys, AES-256-GCM, AAD, token generation and hashing
+  db/                   pg pool, transactions, SQL queries per table, migration runner
+  credential-service/   operations store / use / revoke / history: orchestrate db + crypto + audit
+  server/               Fastify app, routes, auth hook, error handler, config
+  cli/                  migrate, seed, token issue / revoke / list
+  shared/               types shared between server and CLI
 ```
+
+Migrations live in the top-level `migrations/` directory, not under `src/`: `tsc` does not copy `.sql` files to `dist/`, and the Docker image copies the directory as is.
 
 ```mermaid
 flowchart LR
@@ -187,7 +189,7 @@ The service never receives `credential_owner` credentials.
 
 ### Migrations
 
-- Files `src/db/migrations/NNNN_name.sql`, applied in order, each in its own transaction.
+- Files `migrations/NNNN_name.sql`, applied in order, each in its own transaction.
 - Applied versions are stored in `schema_migrations (version, applied_at)`.
 - `pg_advisory_lock` prevents two runners from applying migrations at the same time.
 - Run by `envkeep migrate` as `credential_owner`; migrations are forward-only.
