@@ -33,6 +33,12 @@ Both leak checks were mutation-tested: writing the secret into `label` fails the
 
 Manual run in Docker Compose: migrate → seed → store → use → revoke → `410` → history, all through `curl`.
 
+## Known Risks
+
+1. **The service connects to PostgreSQL as a superuser.** The same `envkeep` user owns the schema, runs migrations and serves requests, so the audit is not append-only and the service can change the schema or delete audit rows (FR-28, NFR-7 not met). A bug or SQL injection would have full DB access. Fix: next step 1.
+2. **Master key in an environment variable** is readable by anyone with access to the host or `docker inspect` (ADR-0004); one key per environment is not enforced yet.
+3. **Implemented but untested paths**: rollback of `store` / `revoke` on audit failure and decryption failure (`500`) work in code but have no tests yet (next steps 2 and 3).
+
 ## What I Would Do Next
 
 1. **Audit append-only in the DB**: roles `credential_owner` / `credential_app`, grants and `BEFORE UPDATE OR DELETE` / `TRUNCATE` triggers; migrations run as owner, service as app role (FR-28, NFR-7, AC-15, design §6). Today everything runs as one superuser.
