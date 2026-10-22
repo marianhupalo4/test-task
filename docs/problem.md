@@ -22,6 +22,22 @@
 4. **Client demand for transparency.** Clients want to see who used their tokens.
 5. **Costly incident response.** Without isolation or audit history, the only safe reaction to any suspected exposure is a full, company-wide key rotation.
 
+## Users
+
+| User                                                        | Need                                                                                                   |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Main backend                                                | Store a client's credential on onboarding, revoke it on disconnect, show the client its usage history. |
+| Worker services (data collectors, report and alert senders) | Get a client's token at the moment they call Shopify, Meta Ads or Google Ads.                          |
+| Operator (our engineers)                                    | Deploy the service, keep the master key, decide which service may use which credentials and for what.  |
+| Clients                                                     | See who used their tokens, when and why. They never call the service directly.                         |
+
+## Value
+
+- **A database dump is no longer a full leak.** A backup, replica or staging restore of either database does not reveal client tokens.
+- **Smaller blast radius.** A leaked client key affects one client, so incident response no longer means asking every client to re-issue keys.
+- **Accountability.** Every use of a token is tied to a service and a declared purpose.
+- **Trust.** Clients can see the usage history of their own tokens, which answers the question the incident raised.
+
 ## Project Idea
 
 Build an internal secrets service dedicated to storing client credentials.
@@ -42,3 +58,16 @@ Compromising a single encryption key or a database dump must not reveal the toke
 - **Separation from product data.** Credentials are no longer stored in the main application database in a usable form; a dump of that database is not enough to obtain secrets.
 - **Usage history.** Every access to a credential is recorded, building an audit trail of who used which token and when.
 - **Client-facing transparency.** The usage history can be exposed to clients so they can see who used their tokens.
+
+## Non-Goals
+
+- Not a general-purpose secrets manager: only client credentials for Shopify, Meta Ads and Google Ads.
+- No direct access for clients; the main backend shows them their history.
+- No in-place update: replacing a credential means storing a new one and revoking the old one.
+- No refreshing or validating tokens against the providers.
+- No high availability or multi-region setup in the first version.
+- No custom cryptography.
+
+## Why Not Vault
+
+HashiCorp Vault or OpenBao would be another system to operate, and we have no one to own it. The per-client usage history with purpose that clients need would still have to be built on top. Cloud secret managers charge per secret and per request, lock us into one provider and have no client-facing audit either. Details and consequences: [ADR-0001](adr/0001-own-service-instead-of-vault.md).
