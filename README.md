@@ -1,6 +1,6 @@
 # envkeep
 
-Internal credential service for client tokens (Shopify, Meta Ads, Google Ads). Internal services store, use and revoke credentials through an HTTP API; every access is written to an append-only audit that the main backend shows to clients.
+Internal credential service for client tokens (Shopify, Meta Ads, Google Ads). Internal services store, use and revoke credentials through an HTTP API; every access is written to an audit that the main backend shows to clients. Making the audit append-only at the database level is planned, not implemented yet: the service currently connects as a superuser (see [Known Risks](docs/validation.md#known-risks)).
 
 - Each client has its own encryption key (AES-256-GCM), wrapped by a master key that never reaches the database.
 - A secret is returned only by `use`, only with an allowed purpose, and only after the audit event is written.
@@ -8,13 +8,15 @@ Internal credential service for client tokens (Shopify, Meta Ads, Google Ads). I
 
 ## Documentation
 
-| Document                                 | Contents                                                         |
-| ---------------------------------------- | ---------------------------------------------------------------- |
-| [docs/problem.md](docs/problem.md)       | The incident and the problem we solve                            |
-| [docs/srs.md](docs/srs.md)               | Requirements, API, data model, threat model, acceptance criteria |
-| [docs/design.md](docs/design.md)         | Modules, request flow, crypto, database, deployment, testing     |
-| [docs/adr/](docs/adr/)                   | Architecture decisions                                           |
-| [docs/validation.md](docs/validation.md) | What is implemented, how it is verified, known risks, next steps |
+| Document                                       | Contents                                                         |
+| ---------------------------------------------- | ---------------------------------------------------------------- |
+| [docs/problem.md](docs/problem.md)             | The incident and the problem we solve                            |
+| [docs/srs.md](docs/srs.md)                     | Requirements, API, data model, threat model, acceptance criteria |
+| [docs/design.md](docs/design.md)               | Modules, request flow, crypto, database, deployment, testing     |
+| [docs/adr/](docs/adr/)                         | Architecture decisions                                           |
+| [docs/validation.md](docs/validation.md)       | What is implemented, how it is verified, known risks, next steps |
+| [docs/retrospective.md](docs/retrospective.md) | What I would change, what next, how AI was used and corrected    |
+| [docs/chat-history.md](docs/chat-history.md)   | Full conversation with the AI, exported automatically            |
 
 ## Requirements
 
